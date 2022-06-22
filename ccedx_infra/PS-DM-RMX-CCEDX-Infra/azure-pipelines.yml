@@ -34,7 +34,7 @@ stages:
   - job: publish_terraform_artifacts_job
     displayName: Publish terraform artifacts
     steps:
-    - publish: '$(Build.SourcesDirectory)/terraform-manifests'
+    - publish: '$(Build.SourcesDirectory)'
       artifact: terraform-manifests
   
 - stage: nonprod_common_infra_resources_plan_stage
