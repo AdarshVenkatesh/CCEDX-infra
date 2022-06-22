@@ -1,0 +1,251 @@
+# Deployment pipeline
+trigger:
+- none
+
+variables:
+  isDevelop: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')] 
+  isMaster: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+
+  utpWorkspaceId: '/subscriptions/9c5daa63-8397-4303-99e0-67b5163243f4/resourcegroups/ce-v2-workspaces/providers/microsoft.operationalinsights/workspaces/utp-csetelemetry-professionalservices'
+
+###################################
+# SIT VARIABLES
+###################################
+  cspResourceGroupSIT: 'csp-sit'
+
+###################################
+# UAT VARIABLES
+###################################
+  cspResourceGroupUAT: 'csp-uat'
+
+###################################
+# PROD VARIABLES
+###################################
+  cspResourceGroupPROD: 'csp-prod'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: publish_terraform_artifacts_stage
+  displayName: 'Publish terraform artifacts'
+  condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+  jobs:
+  - job: publish_terraform_artifacts_job
+    displayName: Publish terraform artifacts
+    steps:
+    - publish: '$(Build.SourcesDirectory)/terraform-manifests'
+      artifact: terraform-manifests
+  
+- stage: nonprod_common_infra_resources_plan_stage
+  displayName: Validate common infra plan in SIT environment
+  condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+  dependsOn: ['publish_terraform_artifacts_stage']
+  jobs:
+  - deployment: nonprod_common_infra_resources_plan_job
+    displayName: Common infra plan in SIT environment
+    environment: 'PS-SD-RM-SIT-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'sit'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupSIT)
+              backendAzureRmStorageAccountName: 'cspterraformstatesit'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-sit'
+              storageSecretKey: 'csp-terraformstate-sit'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'false'
+              cspResourceGroup: $(cspResourceGroupSIT)
+              utpWorkspaceId: $(utpWorkspaceId)
+  - job: nonprod_common_infra_resources_plan_validation_job
+    displayName: Validate common infra plan in SIT environment
+    dependsOn: nonprod_common_infra_resources_plan_job
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        instructions: 'Please validate the build validation and resume'
+        onTimeout: 'reject'
+
+- stage: nonprod_deploy_common_infra_resources_stage
+  displayName: Deploy common infra in SIT environment
+  condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+  dependsOn: ['nonprod_common_infra_resources_plan_stage']
+  jobs:
+  - deployment: nonprod_deploy_common_infra_resources_job
+    displayName: Deploy common infra in SIT environment
+    environment: 'PS-SD-RM-SIT-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'sit'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupSIT)
+              backendAzureRmStorageAccountName: 'cspterraformstatesit'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-sit'
+              storageSecretKey: 'csp-terraformstate-sit'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'true'
+              cspResourceGroup: $(cspResourceGroupSIT)
+              utpWorkspaceId: $(utpWorkspaceId)
+          - publish: $(Pipeline.Workspace)/sit-variables
+            artifact: sit-variables
+
+- stage: nonprod_uat_common_infra_resources_plan_stage
+  displayName: Validate common infra plan in UAT environment
+  condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+  dependsOn: ['nonprod_deploy_common_infra_resources_stage']
+  jobs:
+  - deployment: nonprod_uat_common_infra_resources_plan_job
+    displayName: Common infra plan in UAT environment
+    environment: 'PS-SD-RM-UAT-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'uat'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupUAT)
+              backendAzureRmStorageAccountName: 'cspterraformstateuat'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-uat'
+              storageSecretKey: 'csp-terraformstate-uat'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'false'
+              cspResourceGroup: $(cspResourceGroupUAT)
+              utpWorkspaceId: $(utpWorkspaceId)
+  - job: nonprod_uat_common_infra_resources_plan_validation_job
+    displayName: Validate common infra plan in UAT environment
+    dependsOn: nonprod_uat_common_infra_resources_plan_job
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        instructions: 'Please validate the build validation and resume'
+        onTimeout: 'reject'
+
+- stage: nonprod_uat_deploy_common_infra_resources_stage
+  displayName: Deploy common infra in UAT environment
+  condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+  dependsOn: ['nonprod_uat_common_infra_resources_plan_stage']
+  jobs:
+  - deployment: nonprod_uat_deploy_common_infra_resources_job
+    displayName: Deploy common infra in UAT environment
+    environment: 'PS-SD-RM-UAT-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'uat'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupUAT)
+              backendAzureRmStorageAccountName: 'cspterraformstateuat'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-uat'
+              storageSecretKey: 'csp-terraformstate-uat'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'true'
+              cspResourceGroup: $(cspResourceGroupUAT)
+              utpWorkspaceId: $(utpWorkspaceId)
+          - publish: $(Pipeline.Workspace)/uat-variables
+            artifact: uat-variables
+
+- stage: prod_common_infra_resources_plan_stage
+  dependsOn: ['publish_terraform_artifacts_stage','nonprod_uat_deploy_common_infra_resources_stage']
+  displayName: Validate common infra plan in PROD environment
+  condition: and(succeeded(), eq(variables.isMaster, true))
+  jobs:
+  - deployment: prod_common_infra_resources_plan_job
+    displayName: Common infra resources plan in PROD environment
+    environment: 'PS-SD-RM-PROD-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'prod'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupPROD)
+              backendAzureRmStorageAccountName: 'cspterraformstateprod'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-prd'
+              storageSecretKey: 'csp-terraformstate-prod'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'false'
+              cspResourceGroup: $(cspResourceGroupPROD)
+              utpWorkspaceId: $(utpWorkspaceId)
+  - job: prod_common_infra_resources_plan_validation_job
+    displayName: Validate common infra plan in PROD environment
+    dependsOn: prod_common_infra_resources_plan_job
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        instructions: 'Please validate the build validation and resume'
+        onTimeout: 'reject'
+
+- stage: prod_deploy_common_infra_resources_stage
+  dependsOn: ['prod_common_infra_resources_plan_stage']
+  displayName: Deploy common infra in PROD environment
+  condition: and(succeeded(), eq(variables.isMaster, true))
+  jobs:
+  - deployment: prod_deploy_common_infra_resources_job
+    displayName: Deploy common infra resources in PROD environment
+    environment: 'PS-SD-RM-PROD-INFRA'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: azure-pipeline-template.yml
+            parameters:
+              environment: 'prod'
+              location: 'westus2'
+              workingDirectory: 'terraform-manifests/csp-shared-resources'
+              backendAzureRmResourceGroupName: $(cspResourceGroupPROD)
+              backendAzureRmStorageAccountName: 'cspterraformstateprod'
+              backendAzureRmContainerName: 'tfstatefiles'
+              backendAzureRmKey: 'csp.terraform.common.tfstate'
+              keyVaultName: 'rmsvc-prd'
+              storageSecretKey: 'csp-terraformstate-prod'
+              jsonfileName: 'csp.common.json'
+              isCommonResourceDeployment: 'true'
+              isTerraformPlanValidated: 'true'
+              cspResourceGroup: $(cspResourceGroupPROD)
+              utpWorkspaceId: $(utpWorkspaceId)
+          - publish: $(Pipeline.Workspace)/prod-variables
+            artifact: prod-variables
