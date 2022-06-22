@@ -60,7 +60,7 @@ steps:
 - task: AzureCLI@2
   displayName: 'Get storage key value from key vault'
   inputs:
-    azureSubscription: RM-SubscriptionResources-2020-4-20
+    azureSubscription: terraform-int
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
     inlineScript: |
@@ -88,7 +88,7 @@ steps:
   displayName: 'Terraform Plan'
   inputs:
     workingDirectory:  '$(Pipeline.Workspace)/${{ parameters.workingDirectory }}'
-    azureSubscription: RM-SubscriptionResources-2020-4-20
+    azureSubscription: terraform-int
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
     inlineScript: |
